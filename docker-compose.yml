@@ -14,34 +14,76 @@ services:
       TERM: xterm-256color
       NODE_ENV: production
       
-      # Gateway & Auth
+      # Gateway Security
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+      OPENCLAW_GATEWAY_BIND: ${OPENCLAW_GATEWAY_BIND:-0.0.0.0}
       
-      # OpenRouter
+      # OpenRouter Configuration
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       DEFAULT_MODEL: ${DEFAULT_MODEL:-openrouter/deepseek/deepseek-v3.2}
+      FALLBACK_MODEL: ${FALLBACK_MODEL:-openrouter/minimax/m2.1}
+      PREMIUM_MODEL: ${PREMIUM_MODEL:-openrouter/anthropic/claude-sonnet-4}
       
-      # Budget
+      # Budget Protection
       DAILY_BUDGET_USD: ${DAILY_BUDGET_USD:-2.0}
+      WARNING_THRESHOLD: ${WARNING_THRESHOLD:-1.5}
+      STOP_ON_BUDGET_EXCEEDED: ${STOP_ON_BUDGET_EXCEEDED:-true}
       
-      # Sandbox
+      # Sandbox Security
       SANDBOX_ENABLED: ${SANDBOX_ENABLED:-true}
       SANDBOX_MODE: ${SANDBOX_MODE:-non-main}
+      SANDBOX_SCOPE: ${SANDBOX_SCOPE:-session}
+      SANDBOX_WORKSPACE_ACCESS: ${SANDBOX_WORKSPACE_ACCESS:-rw}
+      SANDBOX_NETWORK_ENABLED: ${SANDBOX_NETWORK_ENABLED:-false}
+      
+      # Model Routing
+      ENABLE_MODEL_ROUTING: ${ENABLE_MODEL_ROUTING:-true}
+      SIMPLE_QUERY_MODEL: ${SIMPLE_QUERY_MODEL:-openrouter/deepseek/deepseek-v3.1-nex-n1-free}
+      CODING_MODEL: ${CODING_MODEL:-openrouter/minimax/m2.1}
+      
+      # Rate Limiting
+      MAX_REQUESTS_PER_HOUR: ${MAX_REQUESTS_PER_HOUR:-100}
+      MAX_TOKENS_PER_REQUEST: ${MAX_TOKENS_PER_REQUEST:-8000}
       
       # Logging
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      
+      # Privacy
+      DISABLE_TELEMETRY: ${DISABLE_TELEMETRY:-true}
     
     volumes:
-      - openclaw_data:/home/node/.openclaw
+      # Persistent data
+      - openclaw_config:/home/node/.openclaw:rw
+      - openclaw_workspace:/home/node/.openclaw/workspace:rw
+      - openclaw_state:/home/node/.openclaw/state:rw
+      - openclaw_credentials:/home/node/.openclaw/credentials:rw
+      
+      # Docker socket per sandbox
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      
+      # Timezone sync
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     
     ports:
-      - "18789:18789"
-      - "18790:18790"
+      - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+      - "${OPENCLAW_BRIDGE_PORT:-18790}:18790"
+    
+    networks:
+      - openclaw-net
+    
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:18789/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     
     restart: unless-stopped
     init: true
     
+    # IMPORTANTE: --allow-unconfigured per primo avvio
     command:
       - "node"
       - "dist/index.js"
@@ -50,11 +92,22 @@ services:
       - "0.0.0.0"
       - "--port"
       - "18789"
+      - "--allow-unconfigured"
+    
+    labels:
+      - "coolify.managed=true"
+      - "coolify.name=openclaw-gateway"
 
 volumes:
-  openclaw_data:
+  openclaw_config:
+    driver: local
+  openclaw_workspace:
+    driver: local
+  openclaw_state:
+    driver: local
+  openclaw_credentials:
     driver: local
 
 networks:
-  default:
+  openclaw-net:
     driver: bridge
