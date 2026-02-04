@@ -9,6 +9,9 @@ services:
     container_name: openclaw-gateway
     hostname: openclaw-gateway
     
+    # ✅ SOLUZIONE: Gira come root per evitare problemi permessi
+    user: "0:0"
+    
     environment:
       HOME: /home/node
       TERM: xterm-256color
@@ -16,7 +19,6 @@ services:
       
       # Gateway Security
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
-      OPENCLAW_GATEWAY_BIND: ${OPENCLAW_GATEWAY_BIND:-0.0.0.0}
       
       # OpenRouter Configuration
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
@@ -74,7 +76,7 @@ services:
       - openclaw-net
     
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:18789/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:18789/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -83,16 +85,21 @@ services:
     restart: unless-stopped
     init: true
     
-    # IMPORTANTE: --allow-unconfigured per primo avvio
+    # ✅ SOLUZIONE: Script che fixa permessi poi avvia come node
     command:
-      - "node"
-      - "dist/index.js"
-      - "gateway"
-      - "--bind"
-      - "lan"
-      - "--port"
-      - "18789"
-      - "--allow-unconfigured"
+      - "sh"
+      - "-c"
+      - |
+        # Fix permissions on volumes
+        mkdir -p /home/node/.openclaw/devices
+        mkdir -p /home/node/.openclaw/workspace
+        mkdir -p /home/node/.openclaw/state
+        mkdir -p /home/node/.openclaw/credentials
+        chown -R node:node /home/node/.openclaw
+        chmod -R 755 /home/node/.openclaw
+        
+        # Start as node user
+        exec su-exec node node dist/index.js gateway --bind lan --port 18789 --allow-unconfigured
     
     labels:
       - "coolify.managed=true"
