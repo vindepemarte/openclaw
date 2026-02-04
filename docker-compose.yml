@@ -1,46 +1,238 @@
+version: '3.8'
+
 services:
   openclaw-gateway:
-    image: ${OPENCLAW_IMAGE:-openclaw:local}
+    # Usa immagine ufficiale pre-built (più sicura e testata)
+    image: ${OPENCLAW_IMAGE:-openclaw/openclaw:latest}
+    
+    container_name: openclaw-gateway
+    hostname: openclaw-gateway
+    
     environment:
+      # Sistema
       HOME: /home/node
       TERM: xterm-256color
+      NODE_ENV: production
+      
+      # Gateway Security
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
-      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
-      CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
-      CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
+      OPENCLAW_GATEWAY_BIND: ${OPENCLAW_GATEWAY_BIND:-0.0.0.0}
+      
+      # OpenRouter Configuration (invece di Claude)
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-openrouter/deepseek/deepseek-v3.2}
+      FALLBACK_MODEL: ${FALLBACK_MODEL:-openrouter/minimax/m2.1}
+      PREMIUM_MODEL: ${PREMIUM_MODEL:-openrouter/anthropic/claude-sonnet-4}
+      
+      # Budget Protection
+      DAILY_BUDGET_USD: ${DAILY_BUDGET_USD:-2.0}
+      WARNING_THRESHOLD: ${WARNING_THRESHOLD:-1.5}
+      STOP_ON_BUDGET_EXCEEDED: ${STOP_ON_BUDGET_EXCEEDED:-true}
+      
+      # Sandbox Security Configuration
+      SANDBOX_ENABLED: ${SANDBOX_ENABLED:-true}
+      SANDBOX_MODE: ${SANDBOX_MODE:-non-main}
+      SANDBOX_SCOPE: ${SANDBOX_SCOPE:-session}
+      SANDBOX_WORKSPACE_ACCESS: ${SANDBOX_WORKSPACE_ACCESS:-rw}
+      SANDBOX_NETWORK_ENABLED: ${SANDBOX_NETWORK_ENABLED:-false}
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-openclaw/openclaw-sandbox:bookworm-slim}
+      
+      # Model Routing Configuration
+      ENABLE_MODEL_ROUTING: ${ENABLE_MODEL_ROUTING:-true}
+      SIMPLE_QUERY_MODEL: ${SIMPLE_QUERY_MODEL:-openrouter/deepseek/deepseek-v3.1-nex-n1-free}
+      CODING_MODEL: ${CODING_MODEL:-openrouter/minimax/m2.1}
+      
+      # Rate Limiting
+      MAX_REQUESTS_PER_HOUR: ${MAX_REQUESTS_PER_HOUR:-100}
+      MAX_TOKENS_PER_REQUEST: ${MAX_TOKENS_PER_REQUEST:-8000}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      
+      # Telemetry (disabilitato per privacy)
+      DISABLE_TELEMETRY: ${DISABLE_TELEMETRY:-true}
+    
     volumes:
-      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+      # Persistent data
+      - ${OPENCLAW_CONFIG_DIR:-./openclaw-data/config}:/home/node/.openclaw:rw
+      - ${OPENCLAW_WORKSPACE_DIR:-./openclaw-data/workspace}:/home/node/.openclaw/workspace:rw
+      - ${OPENCLAW_STATE_DIR:-./openclaw-data/state}:/home/node/.openclaw/state:rw
+      - ${OPENCLAW_CREDENTIALS_DIR:-./openclaw-data/credentials}:/home/node/.openclaw/credentials:rw
+      
+      # Docker socket per gestire sandbox containers
+      # ⚠️ SECURITY: Necessario per sandbox ma monitora usage
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      
+      # Timezone sync (opzionale)
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    
     ports:
+      # Gateway WebSocket API
       - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+      
+      # Bridge port (per comunicazione interna)
       - "${OPENCLAW_BRIDGE_PORT:-18790}:18790"
-    init: true
+      
+      # Control UI (NON esporre pubblicamente, usa SSH tunnel!)
+      # - "${OPENCLAW_UI_PORT:-3456}:3456"  # Commentato per sicurezza
+    
+    networks:
+      - openclaw-net
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    
+    # Resource limits (adatta in base al tuo VPS)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    # Health check
+    healthcheck:
+      test: 
+        - "CMD-SHELL"
+        - "wget --no-verbose --tries=1 --spider http://localhost:18789/health || exit 1"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # Restart policy
     restart: unless-stopped
+    
+    # Init process (previene zombie processes)
+    init: true
+    
+    # Command override per gateway mode
     command:
-      [
-        "node",
-        "dist/index.js",
-        "gateway",
-        "--bind",
-        "${OPENCLAW_GATEWAY_BIND:-lan}",
-        "--port",
-        "18789",
-      ]
+      - "node"
+      - "dist/index.js"
+      - "gateway"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "18789"
+      - "--enable-bridge"
+      - "--bridge-port"
+      - "18790"
+    
+    labels:
+      # Coolify labels (Coolify li usa automaticamente)
+      - "coolify.managed=true"
+      - "coolify.name=openclaw-gateway"
+      
+      # Traefik labels (se usi reverse proxy custom)
+      - "traefik.enable=false"  # Coolify gestisce il proxy
+      
+      # Metadata
+      - "ai.openclaw.service=gateway"
+      - "ai.openclaw.version=2026.2.3"
 
+  # CLI Tool - per gestione e onboarding
+  # NON parte automaticamente, avvialo solo quando serve
   openclaw-cli:
-    image: ${OPENCLAW_IMAGE:-openclaw:local}
+    image: ${OPENCLAW_IMAGE:-openclaw/openclaw:latest}
+    
+    container_name: openclaw-cli
+    hostname: openclaw-cli
+    
     environment:
       HOME: /home/node
       TERM: xterm-256color
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
-      BROWSER: echo
-      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY}
-      CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY}
-      CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE}
+      BROWSER: echo  # Disabilita browser auto-open
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      
+      # Gateway connection
+      OPENCLAW_GATEWAY_URL: ${OPENCLAW_GATEWAY_URL:-http://openclaw-gateway:18789}
+    
     volumes:
-      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+      # Condividi stessi volumi del gateway
+      - ${OPENCLAW_CONFIG_DIR:-./openclaw-data/config}:/home/node/.openclaw:rw
+      - ${OPENCLAW_WORKSPACE_DIR:-./openclaw-data/workspace}:/home/node/.openclaw/workspace:rw
+    
+    networks:
+      - openclaw-net
+    
+    # CLI richiede interattività
     stdin_open: true
     tty: true
+    
     init: true
+    
+    # Profile = non parte automaticamente
+    profiles:
+      - cli
+      - tools
+    
     entrypoint: ["node", "dist/index.js"]
+    
+    labels:
+      - "coolify.managed=false"  # Non gestito da Coolify
+      - "ai.openclaw.service=cli"
+
+  # Sandbox Browser (opzionale - per web automation)
+  # Decommentalo solo se ti serve web scraping/automation
+  # openclaw-sandbox-browser:
+  #   image: ${OPENCLAW_SANDBOX_BROWSER_IMAGE:-openclaw/openclaw-sandbox-browser:latest}
+  #   
+  #   container_name: openclaw-sandbox-browser
+  #   hostname: openclaw-sandbox-browser
+  #   
+  #   environment:
+  #     CHROME_ENABLE_AUTOMATION: "true"
+  #     CHROME_HEADLESS: "true"
+  #   
+  #   networks:
+  #     - openclaw-net
+  #   
+  #   security_opt:
+  #     - seccomp:unconfined  # Necessario per Chrome
+  #   
+  #   shm_size: 2gb  # Chrome richiede shared memory
+  #   
+  #   restart: unless-stopped
+  #   
+  #   profiles:
+  #     - browser
+  #   
+  #   labels:
+  #     - "ai.openclaw.service=sandbox-browser"
+
+# Named volumes per persistenza
+volumes:
+  openclaw_config:
+    driver: local
+    name: openclaw_config
+  
+  openclaw_workspace:
+    driver: local
+    name: openclaw_workspace
+  
+  openclaw_state:
+    driver: local
+    name: openclaw_state
+  
+  openclaw_credentials:
+    driver: local
+    name: openclaw_credentials
+
+# Network isolato
+networks:
+  openclaw-net:
+    driver: bridge
+    name: openclaw-network
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+    # Isolamento network (sandbox containers non possono accedere ad altre reti)
+    internal: false  # Lascia false per permettere accesso internet ai modelli AI
