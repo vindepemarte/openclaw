@@ -3,7 +3,10 @@ version: '3.8'
 services:
   openclaw-gateway:
     # Usa immagine ufficiale pre-built (più sicura e testata)
-    image: ${OPENCLAW_IMAGE:-openclaw/openclaw:latest}
+      build:
+        context: .
+        dockerfile: Dockerfile
+    image: openclaw-local:latest  # Nome locale dopo build
     
     container_name: openclaw-gateway
     hostname: openclaw-gateway
